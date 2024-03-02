@@ -1,0 +1,830 @@
+```{r load the libraries}
+#install.packages("psych", dependencies=TRUE)
+#install.packages("moments", dependencies=TRUE)
+#install.packages("cowplot")
+#install.packages("olsrr")
+#install.packages("caTools")
+#install.packages("fastDummies")
+# install.packages("stargazer")
+# install.packages("sandwich")
+
+library(sandwich)
+library(stargazer)
+library(tidyr)
+library(dplyr)
+library(gridExtra)
+library(ggplot2)
+library(lmtest)
+library(psych)
+library(moments)
+library(tidyverse)
+library(car)
+library(cowplot)
+library(olsrr)
+library(caTools)
+library(fastDummies)
+library(MASS)
+```
+
+# EDA
+
+```{r load the data}
+clickstream_raw <- read.csv('e-shop clothing 2008.csv', sep =';', header = TRUE)
+```
+
+```{r look at the dimensions of the data}
+dim(clickstream_raw)
+```
+
+There 165,474 different clicks
+Each of the clicks have 14 different fields associated
+
+```{r what are the names of the columns}
+names(clickstream_raw)
+```
+
+```{r update the names of the columns to better represent the data represented}
+clickstream <- clickstream_raw %>% 
+        rename("sequence_click_in_session" = "order",
+               "session_ID" = "session.ID",
+               "product_category" = "page.1..main.category.",
+               "product_code" = "page.2..clothing.model.",
+               "product_color" = "colour",
+               "product_location_on_page" = "location",
+               "product_image_model_aspect" = "model.photography",
+               "price_higher_than_avg" = "price.2",
+               "page_of_product" = "page")
+
+
+clickstream['product_location_vert'] <- clickstream['product_location_on_page']
+clickstream['product_location_horiz'] <- clickstream['product_location_on_page']
+
+clickstream <- clickstream %>%
+  mutate(
+    product_category = case_when(
+      product_category == 1 ~ "Trousers",
+      product_category == 2 ~ "Skirts",
+      product_category == 3 ~ "Blouses",
+      product_category == 4 ~ "Sale",
+      TRUE ~ "Other"  # Default case
+    ),
+    product_image_model_aspect = case_when(
+      product_image_model_aspect == 1 ~ "en face",
+      product_image_model_aspect == 2 ~ "profile",
+      TRUE ~ "Other"
+    ),
+    product_color = case_when(
+      product_color == 1 ~ "beige",
+      product_color == 2 ~ "black",
+      product_color == 3 ~ "blue",
+      product_color == 4 ~ "brown",
+      product_color == 5 ~ "burgundy",
+      product_color == 6 ~ "gray",
+      product_color == 7 ~ "green",
+      product_color == 8 ~ "navy blue",
+      product_color == 9 ~ "of many colors",
+      product_color == 10 ~ "olive",
+      product_color == 11 ~ "pink",
+      product_color == 12 ~ "red",
+      product_color == 13 ~ "violet",
+      product_color == 14 ~ "white",
+      TRUE ~ "Other"
+    ),
+    price_higher_than_avg = case_when(
+      price_higher_than_avg == 1 ~ "yes",
+      price_higher_than_avg == 2 ~ "no",
+      TRUE ~ "Other"
+    ),
+    product_location_horiz = case_when(
+      product_location_horiz == 1 ~ 'left',
+      product_location_horiz == 2 ~ 'middle',
+      product_location_horiz == 3 ~ 'right',
+      product_location_horiz == 4 ~ 'left',
+      product_location_horiz == 5 ~ 'middle',
+      product_location_horiz == 6 ~ 'left'
+    ),
+    product_location_vert = case_when(
+      product_location_vert == 1 ~ 'top',
+      product_location_vert == 2 ~ 'top',
+      product_location_vert == 3 ~ 'top',
+      product_location_vert == 4 ~ 'bottom',
+      product_location_vert == 5 ~ 'bottom',
+      product_location_vert == 6 ~ 'bottom'
+    ),
+    product_location_on_page = case_when(
+      product_location_on_page == 1 ~ 'top-left',
+      product_location_on_page == 2 ~ 'top-middle',
+      product_location_on_page == 3 ~ 'top-right',
+      product_location_on_page == 4 ~ 'bottom-left',
+      product_location_on_page == 5 ~ 'bottom-middle',
+      product_location_on_page == 6 ~ 'bottom-right'
+    ),
+    page_of_product = case_when(
+      page_of_product == 1 ~ "first",
+      page_of_product == 2 ~ "second",
+      page_of_product == 3 ~ "third",
+      page_of_product == 4 ~ "fourth",
+      page_of_product == 5 ~ "fifth"
+    )
+    
+  )
+```
+
+```{r look at the number of clicks per location to see if there are any outlier issues in the data}
+
+clickstream_gp_loc <- clickstream %>%
+  group_by(session_ID, product_location_on_page) %>%
+  count()
+
+ggplot(clickstream_gp_loc, aes(x=as.factor(product_location_on_page), y=n, fill=as.factor(product_location_on_page))) +
+    geom_boxplot(alpha=0.2) +
+    xlab("Location of Product Clicked") +
+    ylab("Number of Clicks per Session") +
+    labs(title = "Distribution of Clicks per Session") +
+    guides(fill = guide_legend(title = "Location on Page"))
+
+clickstream_gp_loc_2 <- clickstream %>%
+  group_by(session_ID, product_location_horiz) %>%
+  count()
+
+ggplot(clickstream_gp_loc_2, aes(x=as.factor(product_location_horiz), y=n, fill=as.factor(product_location_horiz))) +
+    geom_boxplot(alpha=0.2) +
+    xlab("Location of Product Clicked") +
+    ylab("Number of Clicks per Session") +
+    labs(title = "Distribution of Clicks per Session") +
+    guides(fill = guide_legend(title = "Horizontal Location"))
+
+clickstream_gp_loc_3 <- clickstream %>%
+  group_by(session_ID, product_location_vert) %>%
+  count()
+
+ggplot(clickstream_gp_loc_3, aes(x=as.factor(product_location_vert), y=n, fill=as.factor(product_location_vert))) +
+    geom_boxplot(alpha=0.2) +
+    xlab("Location of Product Clicked") +
+    ylab("Number of Clicks per Session") +
+    labs(title = "Distribution of Clicks per Session") +
+    guides(fill = guide_legend(title = "Verticle Location"))
+```
+
+Data demonstrates that there's several outliers in the multiple clicks in a single session for those products on the left. The analysis is looking at initial clicks not repeat clicks.
+
+```{r only count the first click in a session}
+clickstream_session <- clickstream  %>%
+  group_by(session_ID, price_higher_than_avg, product_code, product_category, product_location_on_page, 
+           product_location_horiz, product_location_vert, page_of_product, price, product_color, product_image_model_aspect) %>%
+  count(product_code)
+
+sum(clickstream_session$n > 1)
+
+clickstream_session$n[clickstream_session$n > 1] <- '1'
+
+clickstream_session <- clickstream_session %>% 
+        rename("total_clicks" = "n")
+```
+
+```{r group the entire dataset for analysis}
+clickstream_session_prod <- clickstream_session %>%
+    group_by(price_higher_than_avg, product_code, product_category, product_location_on_page, product_location_horiz, 
+             product_location_vert, page_of_product, price, product_color, product_image_model_aspect) %>%
+  count(product_code)
+
+clickstream_session_prod <- clickstream_session_prod %>% 
+        rename("total_clicks" = "n")
+```
+
+
+```{r look at basic analytic graphs on the dataset - distribution of clicks per session based on features}
+
+ggplot(clickstream_session, aes(x = factor(product_location_on_page))) +
+  geom_bar(fill = "blue") +
+  xlab("Product Location on Page") +
+  ylab("Number of Unique Clicks per Session") +
+  ggtitle("Total Unique Clicks per Session by Product Location")
+
+ggplot(clickstream_session, aes(x = factor(product_location_horiz))) +
+  geom_bar(fill = "blue") +
+  xlab("Product Horizontal Location on Page") +
+  ylab("Number of Unique Clicks per Session") +
+  ggtitle("Total Unique Clicks per Session by Product Location, Horizontal")
+
+ggplot(clickstream_session, aes(x = factor(product_location_vert))) +
+  geom_bar(fill = "blue") +
+  xlab("Product Vertical Location on Page") +
+  ylab("Number of Unique Clicks per Session") +
+  ggtitle("Total Unique Clicks per Session by Product Location, Vertical")
+
+ggplot(clickstream_session, aes(x = product_code)) +
+  geom_histogram(fill = "blue", alpha = 0.7, stat="count") +
+  xlab("Product") +
+  ylab("Frequency") +
+  ggtitle("Distribution of Product Clicks")
+```
+
+```{r look at basic analytic graphs on the dataset - distribution of products based on non-location features}
+ggplot(clickstream_session_prod, aes(x = factor(page_of_product))) +
+  geom_bar(fill = 'red') +
+  xlab("Page of product") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for per Page") +
+  labs(fill = "Product Page")
+
+ggplot(clickstream_session_prod, aes(x = factor(product_category))) +
+  geom_bar(fill = 'red') +
+  xlab("Product Category") +
+  ylab("Count of Products") +
+  ggtitle("Product Category Distribution")
+
+ggplot(clickstream_session_prod, aes(x = factor(product_image_model_aspect))) +
+  geom_bar(fill = 'red') +
+  xlab("Model Aspect") +
+  ylab("Count of Products") +
+  ggtitle("Model Aspect Distribution")
+
+ggplot(clickstream_session_prod, aes(x = factor(product_color))) +
+  geom_bar(fill = 'red') +
+  xlab("Color") +
+  ylab("Count of Products") +
+  ggtitle("Color Distribution")
+```
+
+```{r look at basic analytic graphs on the dataset - distribution of products based on location features}
+ggplot(clickstream_session_prod, aes(x = factor(product_location_on_page))) +
+  geom_bar(fill = "blue") +
+  xlab("Product Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Total Products by Product Location")
+
+ggplot(clickstream_session_prod, aes(x = factor(product_location_horiz))) +
+  geom_bar(fill = "blue") +
+  xlab("Product Horizontal Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Total Products by Product Location, Horizontal")
+
+ggplot(clickstream_session_prod, aes(x = factor(product_location_vert))) +
+  geom_bar(fill = "blue") +
+  xlab("Product Vertical Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Total Products by Product Location, Vertical")
+
+```
+
+```{r look at basic analytic graphs on the dataset - distribution of products based on location & features}
+ggplot(clickstream_session_prod, aes(x = factor(product_location_on_page), fill = factor(product_category))) +
+  geom_bar(position = position_dodge()) +
+  xlab("Product Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for Product Categories Across Locations") +
+  labs(fill = "Product Category")
+
+ggplot(clickstream_session_prod, aes(x = factor(product_location_horiz), fill = factor(product_category))) +
+  geom_bar(position = position_dodge()) +
+  xlab("Product Horizontal Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for Product Categories Across Locations, Horizontal") +
+  labs(fill = "Product Category")
+
+ggplot(clickstream_session_prod, aes(x = factor(product_location_vert), fill = factor(product_category))) +
+  geom_bar(position = position_dodge()) +
+  xlab("Product Vertical Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for Product Categories Across Locations, Vertical") +
+  labs(fill = "Product Category")
+
+ggplot(clickstream_session_prod, aes(x = factor(product_location_on_page), fill = factor(product_color))) +
+  geom_bar(position = position_dodge()) +
+  xlab("Product Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for Product Color Across Locations") +
+  labs(fill = "Product Color")
+
+ggplot(clickstream_session_prod, aes(x = factor(product_location_horiz), fill = factor(product_color))) +
+  geom_bar(position = position_dodge()) +
+  xlab("Product Horizontal Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for Product Color Across Locations, Horizontal") +
+  labs(fill = "Product Color")
+
+ggplot(clickstream_session_prod, aes(x = factor(product_location_vert), fill = factor(product_color))) +
+  geom_bar(position = position_dodge()) +
+  xlab("Product Vertical Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for Product Color Across Locations, Vertical") +
+  labs(fill = "Product Color")
+
+ggplot(clickstream_session_prod, aes(x = factor(product_location_on_page), fill = factor(product_image_model_aspect))) +
+  geom_bar(position = position_dodge()) +
+  xlab("Product Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for Model Aspect Across Locations") +
+  labs(fill = "Aspect")
+
+ggplot(clickstream_session_prod, aes(x = factor(product_location_horiz), fill = factor(product_image_model_aspect))) +
+  geom_bar(position = position_dodge()) +
+  xlab("Product Horizontal Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for Model Aspect Across Locations, Horizontal") +
+  labs(fill = "Aspect")
+
+ggplot(clickstream_session_prod, aes(x = factor(product_location_vert), fill = factor(product_image_model_aspect))) +
+  geom_bar(position = position_dodge()) +
+  xlab("Product Vertical Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for Model Aspect Across Locations, Vertical") +
+  labs(fill = "Aspect")
+```
+
+```{r split the data into an exploration and a confirmation dataset}
+
+# create an index to allow you to spit the data
+#clickstream_session <- tibble::rowid_to_column(clickstream_session, "index")
+
+# create your breakdown
+#ind = sample.split(Y = clickstream_session$index, SplitRatio = 0.7)
+
+# sub-setting into exploration data
+#exp_clickstream_session = clickstream_session[!ind,]
+
+# sub-setting into confirmation data
+#conf_clickstream_session = clickstream_session[ind,]
+
+# export the datasets to maintain consistency in our analytics
+#write.csv(exp_clickstream_session, "exp_clickstream_session_new.csv", row.names=TRUE)
+#write.csv(conf_clickstream_session, "conf_clickstream_session_new.csv", row.names=TRUE)
+```
+
+```{r load the saved dataset }
+exp_clickstream_session <- read.csv('exp_clickstream_session.csv', sep =',', header = TRUE)
+conf_clickstream_session <- read.csv('conf_clickstream_session.csv', sep =',', header = TRUE)
+```
+
+```{r group each of the subsets by product}
+
+# group the exploration dataset
+exp_clickstream_session_prod <- exp_clickstream_session %>%
+    group_by(price_higher_than_avg, product_code, product_category, product_location_on_page, product_location_horiz, 
+             product_location_vert, page_of_product, price, product_color, product_image_model_aspect) %>%
+  count(product_code)
+
+exp_clickstream_session_prod <- exp_clickstream_session_prod %>% 
+        rename("total_clicks" = "n")
+
+# group the confirmation dataset
+conf_clickstream_session_prod <- conf_clickstream_session %>%
+    group_by(price_higher_than_avg, product_code, product_category, product_location_on_page, product_location_horiz, 
+             product_location_vert, page_of_product, price, product_color, product_image_model_aspect) %>%
+  count(product_code)
+
+conf_clickstream_session_prod <- conf_clickstream_session_prod %>% 
+        rename("total_clicks" = "n")
+```
+
+Y = 'total_clicks'
+X = 'product_location' ('product_location_vert' + 'product_location_horiz')
+Covariates = product_category, product_color, product_image_model_aspect, page_of_product
+
+Of note, we did consider price as a covariate but given price is not actually something that is displayed, we did not identify it as a covariate since the user cannot SEE it.
+
+Controls = we considered controlling for the page, but we did not have enough data to control for that (i.e. at most only 70 products are in each page). 
+
+```{r provide a description of the exploration dataset}
+describe(exp_clickstream_session_prod)
+```
+
+```{r look at a summary of the exploration dataset}
+summary(exp_clickstream_session_prod)
+```
+
+```{r look at basic analytic graphs on the exploration dataset}
+
+ggplot(exp_clickstream_session_prod, aes(x = factor(page_of_product))) +
+  geom_bar(fill = 'red') +
+  xlab("Page of product") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for per Page") +
+  labs(fill = "Product Page")
+
+ggplot(exp_clickstream_session_prod, aes(x = factor(product_category))) +
+  geom_bar(fill = 'red') +
+  xlab("Product Category") +
+  ylab("Count of Products") +
+  ggtitle("Product Category Distribution")
+
+ggplot(exp_clickstream_session_prod, aes(x = factor(product_image_model_aspect))) +
+  geom_bar(fill = 'red') +
+  xlab("Model Aspect") +
+  ylab("Count of Products") +
+  ggtitle("Model Aspect Distribution")
+
+ggplot(exp_clickstream_session_prod, aes(x = factor(product_color))) +
+  geom_bar(fill = 'red') +
+  xlab("Color") +
+  ylab("Count of Products") +
+  ggtitle("Color Distribution")
+
+ggplot(exp_clickstream_session_prod, aes(x = factor(product_location_on_page))) +
+  geom_bar(fill = "blue") +
+  xlab("Product Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Total Products by Product Location")
+
+ggplot(exp_clickstream_session_prod, aes(x = factor(product_location_horiz))) +
+  geom_bar(fill = "blue") +
+  xlab("Product Horizontal Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Total Products by Product Location, Horizontal")
+
+ggplot(exp_clickstream_session_prod, aes(x = factor(product_location_vert))) +
+  geom_bar(fill = "blue") +
+  xlab("Product Vertical Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Total Products by Product Location, Vertical")
+
+ggplot(exp_clickstream_session_prod, aes(x = factor(product_location_on_page), fill = factor(product_category))) +
+  geom_bar(position = position_dodge()) +
+  xlab("Product Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for Product Categories Across Locations") +
+  labs(fill = "Product Category")
+
+ggplot(exp_clickstream_session_prod, aes(x = factor(product_location_horiz), fill = factor(product_category))) +
+  geom_bar(position = position_dodge()) +
+  xlab("Product Horizontal Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for Product Categories Across Locations, Horizontal") +
+  labs(fill = "Product Category")
+
+ggplot(exp_clickstream_session_prod, aes(x = factor(product_location_vert), fill = factor(product_category))) +
+  geom_bar(position = position_dodge()) +
+  xlab("Product Vertical Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for Product Categories Across Locations, Vertical") +
+  labs(fill = "Product Category")
+
+ggplot(exp_clickstream_session_prod, aes(x = factor(product_location_on_page), fill = factor(product_color))) +
+  geom_bar(position = position_dodge()) +
+  xlab("Product Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for Product Color Across Locations") +
+  labs(fill = "Product Color")
+
+ggplot(exp_clickstream_session_prod, aes(x = factor(product_location_horiz), fill = factor(product_color))) +
+  geom_bar(position = position_dodge()) +
+  xlab("Product Horizontal Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for Product Color Across Locations, Horizontal") +
+  labs(fill = "Product Color")
+
+ggplot(exp_clickstream_session_prod, aes(x = factor(product_location_vert), fill = factor(product_color))) +
+  geom_bar(position = position_dodge()) +
+  xlab("Product Vertical Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for Product Color Across Locations, Vertical") +
+  labs(fill = "Product Color")
+
+ggplot(exp_clickstream_session_prod, aes(x = factor(product_location_on_page), fill = factor(product_image_model_aspect))) +
+  geom_bar(position = position_dodge()) +
+  xlab("Product Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for Model Aspect Across Locations") +
+  labs(fill = "Aspect")
+
+ggplot(exp_clickstream_session_prod, aes(x = factor(product_location_horiz), fill = factor(product_image_model_aspect))) +
+  geom_bar(position = position_dodge()) +
+  xlab("Product Horizontal Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for Model Aspect Across Locations, Horizontal") +
+  labs(fill = "Aspect")
+
+ggplot(exp_clickstream_session_prod, aes(x = factor(product_location_vert), fill = factor(product_image_model_aspect))) +
+  geom_bar(position = position_dodge()) +
+  xlab("Product Vertical Location on Page") +
+  ylab("Number of Products") +
+  ggtitle("Number of Products for Model Aspect Across Locations, Vertical") +
+  labs(fill = "Aspect")
+```
+
+```{r conduct a boxcox test to identify what transformations are best for the total unique clicks}
+
+b <- boxcox(lm(exp_clickstream_session_prod$total_clicks ~ 1))
+
+# this provides the exact number from the boxcox test that we should raise to the power of
+lambda <- b$x[which.max(b$y)]
+lambda
+
+# tests if we can reject the null hypothesis of normality ... which we cannot under the transformation
+test_lambda <- exp_clickstream_session_prod$total_clicks^lambda
+shapiro.test(test_lambda)
+
+# if you test the null hypothesis with the other options of log, sqrt etc
+test_log <- log(exp_clickstream_session_prod$total_clicks)
+shapiro.test(test_log)
+
+test_sqrt <- sqrt(exp_clickstream_session_prod$total_clicks)
+shapiro.test(test_sqrt)
+```
+
+```{r create a histogram for the distribution of the total clicks per product}
+c_hist<-exp_clickstream_session_prod %>%
+  ggplot(aes(x=total_clicks)) +
+  geom_histogram(bins=30) +
+  labs(
+    x = "Total # of Clicks per Product",
+    title = "Distribution of Clicks per Product"
+  )
+
+p_hist<-exp_clickstream_session_prod %>%
+  ggplot(aes(x=price)) +
+  geom_histogram(bins=8) +
+  labs(
+    x = "Price of Product",
+    title = "Distribution of Product Price"
+  )
+
+c_hist_log<-exp_clickstream_session_prod %>%
+  ggplot(aes(x = log(total_clicks))) +
+  geom_histogram() +
+  labs(
+    x = 'Ln(Total Clicks)',
+    title = "Distribution of ln(Total Clicks per Product)"
+  )
+
+p_hist_log<-exp_clickstream_session_prod %>%
+  ggplot(aes(x = log(price))) +
+  geom_histogram() +
+  labs(
+    x = "Ln(Price)",
+    title = "Distribution of ln(Product Price)"
+  )
+
+c_hist_sr<-exp_clickstream_session_prod %>%
+  ggplot(aes(x = sqrt(total_clicks))) +
+  geom_histogram() +
+  labs(
+    x = 'Sqrt(Total Clicks)',
+    title = "Distribution of Sqrt(Total Clicks per Product)"
+  )
+
+c_hist_lambda<-exp_clickstream_session_prod %>%
+  ggplot(aes(x = (total_clicks^lambda))) +
+  geom_histogram() +
+  labs(
+    x = 'Total Clicks^Lambda',
+    title = "Distribution of Total Clicks per Product^Lambda"
+  )
+```
+
+
+```{r evaluate the qq norm plots for the key variables}
+qqclicks<-ggplot(exp_clickstream_session_prod,aes(sample=total_clicks)) + geom_qq(distribution=qnorm) +
+  geom_qq_line(line.p = c(0.25, 0.75), col = "blue") + labs(y="Total # of Clicks per Product", title = "qqnormal plot of total clicks")
+
+qqprice<-ggplot(exp_clickstream_session_prod,aes(sample=price)) + geom_qq(distribution=qnorm) +
+  geom_qq_line(line.p = c(0.25, 0.75), col = "blue") + labs(y="Product Price", title = "qqnormal plot of product price")
+
+qqclicks_ln<-ggplot(exp_clickstream_session_prod,aes(sample=log(total_clicks))) + geom_qq(distribution=qnorm) +
+  geom_qq_line(line.p = c(0.25, 0.75), col = "blue") + labs(y="ln(total clicks)", title = "qqnormal plot of ln(total clicks per product)")
+
+qqprice_ln<-ggplot(exp_clickstream_session_prod,aes(sample=log(price))) + geom_qq(distribution=qnorm) +
+  geom_qq_line(line.p = c(0.25, 0.75), col = "blue") + labs(y="ln(price)", title = "qqnormal plot of ln(product price)")
+
+qqclicks_sr<-ggplot(exp_clickstream_session_prod,aes(sample=sqrt(total_clicks))) + geom_qq(distribution=qnorm) +
+  geom_qq_line(line.p = c(0.25, 0.75), col = "blue") + labs(y="sqrt(total clicks)", title = "qqnormal plot of sqrt(total clicks per product)")
+
+qqclicks_lambda<-ggplot(exp_clickstream_session_prod,aes(sample=(total_clicks^lambda))) + geom_qq(distribution=qnorm) +
+  geom_qq_line(line.p = c(0.25, 0.75), col = "blue") + labs(y="Total clicks^Lambda", title = "qqnormal plot of (total clicks per product)^lambda")
+```
+
+
+```{r show the comparison charts for distribution}
+
+options(repr.plot.width=7.5, repr.plot.height=2)
+suppressWarnings(grid.arrange(c_hist, qqclicks, c_hist_log, qqclicks_ln, c_hist_sr, qqclicks_sr, c_hist_lambda, 
+                              qqclicks_lambda, ncol = 2, padding = unit(0.1, 'line')))
+                              
+                              
+suppressWarnings(grid.arrange(p_hist, qqprice, p_hist_log, qqprice_ln, ncol = 2, 
+                              padding = unit(0.1, 'line')))
+
+```
+
+Assessment is that it would be good to log the total clicks, but does not appear to impact the distribution of the price. Also it still does not look like as good of a transformation for the total unique clicks as we'd like so do a boxcox test.
+
+# Description of how to interpret stepped qq plots
+https://stats.stackexchange.com/questions/161591/how-to-interpret-this-qq-plot
+
+```{r relevel the data so that the base for location is 'top-left'}
+exp_clickstream_session_prod$product_location_on_page <- factor(exp_clickstream_session_prod$product_location_on_page)
+exp_clickstream_session_prod$product_location_on_page <- relevel(exp_clickstream_session_prod$product_location_on_page, ref =
+                                                                   'top-left')
+```
+
+```{r relevel the data so that the base for page is 'first'}
+exp_clickstream_session_prod$page_of_product <- factor(exp_clickstream_session_prod$page_of_product)
+exp_clickstream_session_prod$page_of_product <- relevel(exp_clickstream_session_prod$page_of_product, ref =
+                                                                   'first')
+```
+
+```{r relevel the data so that the base for category is 'sale'}
+exp_clickstream_session_prod$product_category <- factor(exp_clickstream_session_prod$product_category)
+exp_clickstream_session_prod$product_category <- relevel(exp_clickstream_session_prod$product_category, ref =
+                                                                   'Sale')
+```
+
+```{r relevel the data so that the base for horiz location is 'left'}
+exp_clickstream_session_prod$product_location_horiz <- factor(exp_clickstream_session_prod$product_location_horiz)
+exp_clickstream_session_prod$product_location_horiz <- relevel(exp_clickstream_session_prod$product_location_horiz, ref =
+                                                                   'left')
+```
+
+```{r relevel the data so that the base for horiz location is 'top'}
+exp_clickstream_session_prod$product_location_vert <- factor(exp_clickstream_session_prod$product_location_vert)
+exp_clickstream_session_prod$product_location_vert <- relevel(exp_clickstream_session_prod$product_location_vert, ref =
+                                                                   'top')
+```
+
+```{r only looking at the location on page}
+model_final_loc <- lm((total_clicks^lambda_optimal) ~ product_location_on_page, data =
+               conf_clickstream_session_prod)
+anova(model_final_loc)
+summary(model_final_loc)
+```
+
+
+```{r create a model that uses only product location}
+model1 <- lm((total_clicks)^(lambda) ~ product_location_on_page + page_of_product + product_category, data = exp_clickstream_session_prod)
+anova(model1)
+summary(model1)
+```
+
+```{r remove outliers of our total clicks per product based on cooks distance}
+# need to ensure this works -- need to redo the transformed model section
+cooksd <- cooks.distance(model1)
+influential <- cooksd > (4/(nrow(exp_clickstream_session_prod) - length(coefficients(model1))))
+exp_clickstream_session_prod_no_outliers <- exp_clickstream_session_prod[!influential, ]
+```
+
+```{r}
+outliers <- exp_clickstream_session_prod[influential, ]
+outliers
+```
+```{r re-run and get the best lambda based on removal of the outliers}
+# need to redo this as well
+b_new <- boxcox(lm(exp_clickstream_session_prod_no_outliers$total_clicks ~ 1))
+
+# this provides the exact number from the boxcox test that we should raise to the power of
+lambda_optimal <- b_new$x[which.max(b_new$y)]
+lambda_optimal
+
+# tests if we can reject the null hypothesis of normality ... which we cannot under the transformation
+test_lambda_new <- exp_clickstream_session_prod_no_outliers$total_clicks^lambda_optimal
+shapiro.test(test_lambda_new)
+
+# if you test the null hypothesis with the other options of log, sqrt etc
+test_log_new <- log(exp_clickstream_session_prod_no_outliers$total_clicks)
+shapiro.test(test_log)
+
+test_sqrt_new <- sqrt(exp_clickstream_session_prod_no_outliers$total_clicks)
+shapiro.test(test_sqrt)
+```
+```{r change the order of the pages}
+exp_clickstream_session_prod_no_outliers$page_of_product <- factor(
+  exp_clickstream_session_prod_no_outliers$page_of_product,
+  levels = c("first", "second", "third", "fourth", "fifth")
+)
+```
+
+```{r create a model that uses only product location}
+model_final <- lm((total_clicks)^(lambda_optimal) ~ product_location_on_page + page_of_product + product_category , data = exp_clickstream_session_prod_no_outliers)
+anova(model_final)
+summary(model_final)
+```
+
+
+# TEST WITH 70%
+
+```{r relevel the data so that the base for location is 'top-left'}
+conf_clickstream_session_prod$product_location_on_page <- factor(conf_clickstream_session_prod$product_location_on_page)
+conf_clickstream_session_prod$product_location_on_page <- relevel(conf_clickstream_session_prod$product_location_on_page, ref =
+                                                                   'top-left')
+```
+
+```{r relevel the data so that the base for page is 'first'}
+conf_clickstream_session_prod$page_of_product <- factor(conf_clickstream_session_prod$page_of_product)
+conf_clickstream_session_prod$page_of_product <- relevel(conf_clickstream_session_prod$page_of_product, ref =
+                                                                   'first')
+```
+
+```{r relevel the data so that the base for category is 'sale'}
+conf_clickstream_session_prod$product_category <- factor(conf_clickstream_session_prod$product_category)
+conf_clickstream_session_prod$product_category <- relevel(conf_clickstream_session_prod$product_category, ref =
+                                                                   'Sale')
+```
+
+```{r change the order of the pages}
+conf_clickstream_session_prod$page_of_product <- factor(
+  conf_clickstream_session_prod$page_of_product,
+  levels = c("first", "second", "third", "fourth", "fifth")
+)
+```
+
+```{r}
+lambda_optimal
+```
+
+
+```{r}
+model_final_test <- lm((total_clicks)^(lambda_optimal) ~ product_location_on_page + page_of_product + product_category , data = conf_clickstream_session_prod)
+anova(model_final_test)
+summary(model_final_test)
+```
+
+```{r}
+(exp(coef(model_final_test)) - 1) * 100
+```
+
+
+```{r create a model that ALL variables}
+model_kitchen_sink <- lm((total_clicks)^(lambda_optimal) ~ product_location_on_page + page_of_product + product_category + price + product_color + product_image_model_aspect + price_higher_than_avg, data = conf_clickstream_session_prod)
+anova(model_kitchen_sink)
+summary(model_kitchen_sink)
+```
+
+# Creating stargazer table
+
+```{r fit models, include=FALSE, warning=FALSE}
+
+se_minimal <- model_final_loc %>% 
+  vcovHC(type = "HC1") %>% 
+  diag() %>% 
+  sqrt()
+
+se_central <- model_final_test %>% 
+  vcovHC(type = "HC1") %>% 
+  diag() %>% 
+  sqrt()
+
+se_verbose <- model_kitchen_sink %>% 
+  vcovHC(type = "HC1") %>%
+  diag() %>%
+  sqrt()
+```
+
+
+```{r display regression table, message=FALSE, echo=FALSE, results='asis'}
+stargazer(
+  model_final_loc, model_final_test, model_kitchen_sink, 
+  type = 'text', 
+  se = list(se_minimal,se_central,se_verbose),
+  omit = c("product_color", "product_image_model_aspect", "price_higher_than_avg"),
+  header=FALSE,
+  title = "Estimated Regressions",
+  dep.var.caption  = "Output Variable: Unique Clicks per Product",
+  dep.var.labels   = "",
+  dep.var.labels.include = FALSE,
+  star.cutoffs = c(0.05, 0.01, 0.001),
+  covariate.labels = c("Pos: Bottom Left", "Pos: Bottom Middle", "Pos: Bottom Right", "Pos: Top Middle", "Pos: Top Right", "Page 2", "Page 3", "Page 4", "Page 5", "Category: Blouse", "Category: Skirt", "Category: Trousers", "Price", "Base: Top Left, Page 1, Sale"),
+  add.lines = list(
+    c("Product Color", "", "","\\checkmark"),
+    c("Model Aspect", "", "", "\\checkmark"),
+    c("Price Higher than Average", "", "","\\checkmark"),
+    "\\hline"
+  ),
+  omit.stat=c("adj.rsq","f"),
+  digits=2,
+  notes.append = FALSE,
+  notes = "\\parbox[t]{7cm}{$HC_1$ robust standard errors in parentheses.}"
+)
+```
+
+# CLM
+```{r Linearity}
+plot(model_final_test, which = 1)
+```
+
+
+
+```{r Independence}
+dwtest(model_final_test)
+```
+
+```{r Homoscedasticity}
+bptest(model_final_test)
+plot(model_final_test, which = 3)
+```
+```{r Normality}
+shapiro.test(residuals(model_final_test))
+
+ks.test(residuals(model_final_test), "pnorm", mean(residuals(model_final_test)), sd(residuals(model_final_test)))
+
+qqnorm(residuals(model_final_test))
+qqline(residuals(model_final_test))
+
+hist(residuals(model_final_test))
+```
+
+
+
+
+
+
+

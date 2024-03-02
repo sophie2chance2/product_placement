@@ -1,0 +1,381 @@
+---
+title: 'Location, Location, Location: How Product Placement Impacts Clicks'
+subtitle: 'DATASCI 203: Lab 2'
+author: 'Sophie Chance, Amy Zhang, Maureen Fromuth'
+
+output: pdf_document
+
+header-includes:
+  - \usepackage{wrapfig}
+---
+\newpage
+\setcounter{page}{1}
+
+```{r load packages and set options, include=FALSE}
+
+#install.packages("psych", dependencies=TRUE)
+#install.packages("moments", dependencies=TRUE)
+#install.packages("cowplot")
+#install.packages("olsrr")
+#install.packages("caTools")
+#install.packages("fastDummies")
+
+library(tidyr)
+library(dplyr)
+library(gridExtra)
+library(ggplot2)
+library(lmtest)
+library(psych)
+library(moments)
+library(tidyverse)
+library(car)
+library(cowplot)
+library(olsrr)
+library(caTools)
+library(fastDummies)
+library(MASS)
+library(stargazer)
+library(sandwich)
+
+options(tinytex.verbose = TRUE)
+knitr::opts_chunk$set(echo=FALSE, message=FALSE)
+```
+
+```{r load datasets that were saved, echo=FALSE}
+exp_clickstream_session <- read.csv('exp_clickstream_session.csv', sep =',', header = TRUE)
+conf_clickstream_session <- read.csv('conf_clickstream_session.csv', sep =',', header = TRUE)
+```
+
+```{r group each of the subsets by product, echo=FALSE}
+# group the exploration dataset
+exp_clickstream_session_prod <- exp_clickstream_session %>%
+    group_by(price_higher_than_avg, product_code, product_category, product_location_on_page, product_location_horiz, 
+             product_location_vert, page_of_product, price, product_color, product_image_model_aspect) %>%
+  count(product_code)
+
+exp_clickstream_session_prod <- exp_clickstream_session_prod %>% 
+        rename("total_clicks" = "n")
+
+# group the confirmation dataset
+conf_clickstream_session_prod <- conf_clickstream_session %>%
+    group_by(price_higher_than_avg, product_code, product_category, product_location_on_page, product_location_horiz, 
+             product_location_vert, page_of_product, price, product_color, product_image_model_aspect) %>%
+  count(product_code)
+
+conf_clickstream_session_prod <- conf_clickstream_session_prod %>% 
+        rename("total_clicks" = "n")
+```
+
+```{r conduct a boxcox test to get lambda, fig.show='hide'}
+b <- boxcox(lm(exp_clickstream_session_prod$total_clicks ~ 1))
+lambda <- b$x[which.max(b$y)]
+
+# tests if we can reject the null hypothesis of normality ... which we cannot under the transformation
+test_lambda <- exp_clickstream_session_prod$total_clicks^lambda
+shapiro_test_lambda <- shapiro.test(test_lambda)
+
+# if you test the null hypothesis with the other options of log, sqrt etc
+test_log <- log(exp_clickstream_session_prod$total_clicks)
+shapiro_test_log <- shapiro.test(test_log)
+
+test_sqrt <- sqrt(exp_clickstream_session_prod$total_clicks)
+shapiro_test_sqrt <- shapiro.test(test_sqrt)
+```
+
+```{r create the diagrams to demonstrate the impact of the lambda transformation on the number of clicks, echo=FALSE}
+qqprice<-ggplot(exp_clickstream_session_prod,aes(sample=price)) + geom_qq(distribution=qnorm) +
+  geom_qq_line(line.p = c(0.25, 0.75), col = "blue") + labs(y="Product Price", title = "qqnormal plot of product price")
+
+qqclicks_lambda<-ggplot(exp_clickstream_session_prod,aes(sample=(total_clicks^lambda))) + geom_qq(distribution=qnorm) +
+  geom_qq_line(line.p = c(0.25, 0.75), col = "blue") + labs(y="Total clicks^Lambda", title = "qqnormal plot of (total clicks per product)^lambda")
+
+# suppressWarnings(grid.arrange(qqclicks, qqclicks_lambda, ncol = 2,
+#                               padding = unit(0.1, 'line')))
+```
+
+```{r relevel the exploration data to select the appropriate base}
+exp_clickstream_session_prod$product_location_on_page <- factor(exp_clickstream_session_prod$product_location_on_page)
+exp_clickstream_session_prod$product_location_on_page <- relevel(exp_clickstream_session_prod$product_location_on_page, ref =
+                                                                   'top-left')
+
+exp_clickstream_session_prod$page_of_product <- factor(exp_clickstream_session_prod$page_of_product)
+exp_clickstream_session_prod$page_of_product <- relevel(exp_clickstream_session_prod$page_of_product, ref =
+                                                                   'first')
+
+exp_clickstream_session_prod$product_category <- factor(exp_clickstream_session_prod$product_category)
+exp_clickstream_session_prod$product_category <- relevel(exp_clickstream_session_prod$product_category, ref =
+                                                                   'Sale')
+
+```
+
+```{r build out the exploratory model}
+model1 <- lm((total_clicks^lambda) ~ product_location_on_page + page_of_product + product_category, data = 
+               exp_clickstream_session_prod)
+```
+
+```{r remove outliers of our total clicks per product based on cooks distance, fig.show='hide'}
+
+# calculate the cooks distance to remove the influential outliers in the exploratory dataset
+cooksd <- cooks.distance(model1)
+influential <- cooksd > (4/(nrow(exp_clickstream_session_prod) - length(coefficients(model1))))
+exp_clickstream_session_prod_no_outliers <- exp_clickstream_session_prod[!influential, ]
+
+# redo the lambda for the more optimal lambda when outliers are not invovled
+b_new <- boxcox(lm(exp_clickstream_session_prod_no_outliers$total_clicks ~ 1))
+
+# this provides the exact number from the boxcox test that we should raise to the power of
+lambda_optimal <- b_new$x[which.max(b_new$y)]
+
+# tests if we can reject the null hypothesis of normality ... which we cannot under the transformation
+test_lambda_new <- exp_clickstream_session_prod_no_outliers$total_clicks^lambda_optimal
+shapiro_test_lambda_new <- shapiro.test(test_lambda)
+
+# if you test the null hypothesis with the other options of log, sqrt etc
+test_log_new <- log(exp_clickstream_session_prod_no_outliers$total_clicks)
+shapiro_test_log_new <- shapiro.test(test_log_new)
+
+test_sqrt_new <- sqrt(exp_clickstream_session_prod_no_outliers$total_clicks)
+shapiro_test_sqrt_new <- shapiro.test(test_sqrt_new)
+```
+
+```{r build out the exploratory model wout the outliers}
+model3 <- lm((total_clicks^lambda_optimal) ~ product_location_on_page + page_of_product + product_category, data = 
+               exp_clickstream_session_prod_no_outliers)
+```
+
+```{r relevel the confirmation data so that the base}
+conf_clickstream_session_prod$product_location_on_page <- factor(conf_clickstream_session_prod$product_location_on_page)
+conf_clickstream_session_prod$product_location_on_page <- relevel(conf_clickstream_session_prod$product_location_on_page, ref
+                                                                  = 'top-left')
+
+conf_clickstream_session_prod$page_of_product <- factor(conf_clickstream_session_prod$page_of_product)
+conf_clickstream_session_prod$page_of_product <- relevel(conf_clickstream_session_prod$page_of_product, ref =
+                                                                   'first')
+
+conf_clickstream_session_prod$product_category <- factor(conf_clickstream_session_prod$product_category)
+conf_clickstream_session_prod$product_category <- relevel(conf_clickstream_session_prod$product_category, ref =
+                                                                   'Sale')
+```
+
+```{r calculate the final models with the confirmation dataset}
+model_final_loc <- lm((total_clicks^lambda_optimal) ~ product_location_on_page, data = 
+               conf_clickstream_session_prod)
+
+model_final_test <- lm((total_clicks^lambda_optimal) ~ product_location_on_page + page_of_product + product_category, data = 
+               conf_clickstream_session_prod)
+
+model_kitchen_sink <- lm((total_clicks)^(lambda_optimal) ~ product_location_on_page + page_of_product + product_category + 
+                           price + product_color + product_image_model_aspect + price_higher_than_avg, data = 
+                           conf_clickstream_session_prod)
+```
+
+```{r fit models, include=FALSE, warning=FALSE}
+
+se_minimal <- model_final_loc %>% 
+  vcovHC(type = "HC1") %>% 
+  diag() %>% 
+  sqrt()
+
+se_central <- model_final_test %>% 
+  vcovHC(type = "HC1") %>% 
+  diag() %>% 
+  sqrt()
+
+se_verbose <- model_kitchen_sink %>% 
+  vcovHC(type = "HC1") %>%
+  diag() %>%
+  sqrt()
+```
+
+```{r display regression table, message=FALSE, echo=FALSE, results='asis'}
+stargazer(
+  model_final_loc, model_final_test, model_kitchen_sink, 
+  type = 'latex', 
+  se = list(se_minimal,se_central,se_verbose),
+  omit = c("product_color", "product_image_model_aspect", "price_higher_than_avg"),
+  header=FALSE,
+  title = "Table 1: Estimated Regressions",
+  dep.var.caption  = "Output Variable: Unique Clicks per Product",
+  dep.var.labels   = "",
+  dep.var.labels.include = FALSE,
+  star.cutoffs = c(0.05, 0.01, 0.001),
+  covariate.labels = c("Pos: Bottom Left", "Pos: Bottom Middle", "Pos: Bottom Right", "Pos: Top Middle", "Pos: Top Right", "Page 2", "Page 3", "Page 4", "Page 5", "Category: Blouse", "Category: Skirt", "Category: Trousers", "Price", "Base: Top Left, Page 1, Sale"),
+  add.lines = list(
+    c("Product Color", "", "","\\checkmark"),
+    c("Model Aspect", "", "", "\\checkmark"),
+    c("Price Higher than Average", "", "","\\checkmark"),
+    "\\hline"
+  ),
+  omit.stat=c("adj.rsq","f"),
+  digits=2,
+  notes.append = FALSE,
+  notes = "\\parbox[t]{7cm}{$HC_1$ robust standard errors in parentheses.}"
+)
+```
+
+```{r CLM - 1 normality of residuals, fig.show='hide'}
+plot_2 <- plot(model_final_test, which = 2)
+shapiro_residuals <- shapiro.test(sample(model_final_test$residuals))
+jarque_residuals <- jarque.test(model_final_test$residuals)
+
+skewness <- skewness(model_final_test$residuals)
+k_val <- kurtosis(model_final_test$residuals) - 3
+```
+
+```{r CLM - 2 homoscedastic errors, fig.show='hide'}
+plot_3 <- plot(model_final_test, which = 3)
+bptest <- bptest(model_final_test)
+```
+
+```{r CLM - 3 linear conditional expecations, fig.show='hide'}
+plot_1 <- plot(model_final_test, which = 1)
+ols_plot_resid_hist(model_final_test)
+quantile <- summary(model_final_test$residuals)
+```
+
+```{r CLM - 4 evaluate colinarity by looking at the VIF model}
+vif_conf <- vif(model_final_test)
+```
+
+## Introduction
+
+\begin{wrapfigure}{r}{0.5\textwidth}
+  \begin{center}
+    \includegraphics[width=0.5\textwidth]{"Lab2 Causal Path.png"}
+  \end{center}
+  \caption{Causal Pathway for Clickstream Study}
+\end{wrapfigure}
+
+The importance of an effective online store has become increasingly critical in driving revenue with the growing relevance of e-commerce. The attention span of consumers is limited, as is the real estate on any given webpage. As such, it is important for e-commerce companies to understand the impact of various factors of product advertisement.
+
+Investments have already been made in developing ranking algorithms to bring high conversion items to the top of each consumer's feed based on assumptions regarding the value of 'top of feed' or first seen items. However, there are still questions to be explored and answered more concretely in this space. As an online retail strategy analytics team, we believe that it is important for retail owners, such as our client maternity store, to understand the impact of location placement of a product on clicks generated. This information can be leveraged by retail owners and their supporting software team to leverage locations on webpages to increase clicks for priority products. 
+
+This study will use clickstream data with various features to evaluate whether or not the location of a product on a webpage has any statistical significance in altering the unique-per-session clicks the product receives off of a baseline location and page number. Applying a set of regression models, our team has determined the statistical significance and estimated the relative changes in number of clicks that result from the placement of an item on a webpage. 
+
+Given the languages of our client’s customers are all right-to-left (RTL), the practical hypothesis of this test is that placing products in the top left position will result in greater number of total unique clicks per session. Statistically, the null hypothesis for this study is that the location of the product has no impact on the number of unique session clicks the product receives.  
+
+## Description of Data
+
+We will be leveraging a dataset containing observational information on clickstream from an online store offering clothing for pregnant women. The data is from five months of 2008. While this data is aged and e-commerce user experience has greatly improved in recent years, we believe that the general learnings around product placement and clicks generated will still hold.
+
+The data represents 165,474 independent clicks on one of 217 different products. Each click identifies the month, day and year of the click as well as the online session ID for the user. The data provides details about the products to include category of the product, the specific color, and the price in U.S dollars. It also identifies details about the layout of the website such as the location of the product photo on the webpage, page number that the photo of the product, and whether the photo for the product is either profile or face on. The product information and website layout are static and do not change during the course of the data collection. As such, we selected the individual product as our unit of observation. 
+
+## Operationalization of Key Concepts
+
+To be able to analyze the number of clicks per product, we transformed the original dataset and grouped by products to return the total clicks per each of the 217 products. This study leveraged variables in this transformed of the primary dataset from which we selected variables. We chose the variable 'location of product' in the dataset to represent the treatment variable of location on the webpage. For the output variable, we selected the variable 'total clicks per product' to represent the total unique session clicks per product. 
+
+These variables match the concepts well in general, but some transformations were necessary to minimize the gap between the conceptual and operational definitions. Specialically, we renamed columns to enable readability and we also transformed numerical values to the named value (e.g. we transformed the value 1 in ‘location on page’ to 
+Additionally, for 'total clicks per product', this study wanted to mitigate the potential impact of certain sessions where users clicked repeatedly on the same product and biased our results. Therefore, to control for potential dependence between clicks in a single session, we aggregated the sum of clicks for each individual product, but only counted one click per product per session. This control resulted in a removal of 13,058 total clicks. However, there may still be a gap to the ideal operationalization here, as the dataset does not allow us to ensure independence between sessions and clicks.
+
+| X or Y | Concept| Actual Feature Used |
+| ----- | -------- | ----------------- |
+| X | Location of Product | Location of Product - designated as a number 1-6 |
+| Y | Total Number of Clicks per Product | Summing clicks (count of rows) by product, counting only 1 click per session |
+
+While we considered other variables as our treatment variable, such as page number or price, we believed that the impact of the specific location on the page was less studied in this field, and therefore more valuable for our client to understand.
+
+## Explaining Key Modeling Decisions
+
+We have split our data into training (30%) and confirmation (70%) sets at the individual session level.
+
+To mitigate potential confounding variables and observations, we removed a portion of observations, applied transformations where helpful, and left out covariates that were not incremental to our model to prevent overfitting.
+
+Recognizing that outliers are particularly impactful for linear models, and there may exist products that are particularly popular/not, we removed a total of 7 outliers from the exploratory dataset based on each product observation's Cook's distance.
+
+| Dataset  | Element Changed | Amount Removed |
+| ----- | -------- | ----------------- |
+| Original Dataset (rows = clicks) | Repeat clicks counted on the same product within the same session | 13,065 clicks removed |
+| Exploratory Dataset, Grouped by Product (rows = products) | Outlier Products based on Total Unique Session Clicks per Product | 7 products removed |
+
+During the initial EDA, we also observed skew in the data for the number of clicks. Using the Shapiro-Wilks Normality Test, we identified and applied a lambda transformation using Box Cox to the outcome variable to normalize the data.
+
+
+Ultimately, the model will be based on the variables location on the page, page number, and category of the product. The baseline position for our model will be for a sale product that is located in the top-left corner of the page and on the first page of the website. 
+
+The other covariates were left out for a variety of reasons. We did not include the price of the product as the price is not displayed on the page, and therefore the consumer decision to click would be not impacted by the price of the product. We did not include the aspect of the photo as there is a negligible difference between the two options, and was therefore not incremental to include in the model. Lastly, we did not include color as there were 10+ unique color options, and including this variable would greatly increase the degrees of freedom for the model and contribute to potential overfitting.
+
+## Results 
+
+- Regression Table
+- Demonstrate your specifications in a stargazer regression table
+- Make it easy for the reader to find the coefficients that represent key effects near the top of the table
+- Share the most appropriate standard errors
+- Need to estimate at least three model specifications - first is the only the key variable you want to measure
+- *Run this table on the confirmation data
+- *Model 1-treatment & output, Model 2-model 1 plus covariates you think most important but no more than 5 covariate concepts (dummies not included), Model 3-kitchen sink
+- Comment on statistical and practical significance, may want to look at something other than standard t-test
+- Make clear to your audience the practical significance - how will Y/product change as a result of what discovered
+- Answer if there are limits to the change we are proposing
+- Answer what are the most important results and least important results discovered
+- *On practical significance, refer back to your client/thesis
+- *How does the results/significance compare to your thesis
+- *Discuss the relevant material from the stargazer table - what surprised you, what did not
+- *Interpret the coefficient of your treatment variable - do you think the client could/should use this to manipulate the process
+
+## Limitations
+
+- Describe statistical consequences for any violations of the assumptions & strategies to mitigate consequences
+- *Evaluate CLM assumptions even if claiming large sample; highlight which ones may cause problems and demonstrate you know where to start to improve your model
+- Identify if there are any outcome variables on the right hand side - if so, provide the direction of bias this causes
+
+This model is based on a large sample of data.
+
+**IID Data** *probably most problematic*
+Currently, the dataset does not provide information as to the customer who is linked to each session and click. We partially accounted for independence concerns by deduping clicks that occur in the same session. However, we cannot guarantee that the observations are therefore independent as there is no tracking possibility across sessions. There is no evidence of autocorrelation in the data as shown by the Durbin-Watson test. 
+
+**Linear Conditional Expectation** *evidence of a non-linear relationship*
+The assumption of linearity holds; a graph of the residuals v fitted values indicates a random and consistent spread of data points around 0 on the x-axis. 
+
+**No Perfect Collinearity** *no strong evidence of collinearity*
+Variables are automatically dropped to avoid perfect collinearity
+
+**Homoskedastic Errors** *no evidence of heteroscedastic errors*
+We performed a Breusch-Pagan test on our confirmation model. The p-value for this test was .71, and as such the model fails to reject the null hypothesis that there is no evidence for heteroscedastic error. 
+
+**Normally distributed errors** *evidence of non-normality in residuals*
+We performed several tests to include the Shapiro-Wilk normality test, which resulted in a p-value less than 0.05. This resulted in a rejection of the null hypothesis of normality in residuals. Similarly, further evaluation of the distribution of the residuals demonstrated in a left skew and a significantly high kurtosis at 16 signifying a Leptokurtic distribution.
+
+*Reverse causality*
+There is low possibility for reverse causality for this study’s model, as the outcome clicks does not affect the location of the product. This may however be different for e-commerce websites today, where sorting algorithms based on best-selling products may change the future location a product appears on the webpage (i.e. higher clicks would result in a higher position or page number for that product).
+
+For structural limitations, our model may be biased by several omitted variables. In particular, this dataset does not provide the products' relative popularity or dates of availability on the website. For relative popularity, we are in particular concerned with trendy items that may see higher clicks regardless of its placement on page, page number, etc. We expect a positive correlation between product popularity and total clicks. Therefore expect a negative omitted variable bias on the key variables. The main effect is therefore driven towards zero, making our hypothesis tests underconfident. This is similarly true for the amount of time that a product is available to customers. It is unclear how much time each product is listed on the website for resulting in a positively correlated bias with total clicks. However, we do not believe this OVB calls the results of this study into question, as we have accounted for outliers that may be unduly influenced by variables such as popularity.
+
+Updated causal path diagram:
+https://github.com/mids-w203/lab-1-stat-pack/blob/main/Lab%202/Lab2%20Causal%20Path%20Updated.jpg
+
+
+## Conclusion 
+In conclusion, this study found that product location on page had no statistically significant impact to total clicks a product received. However, the top-right location performed the worst, seeing X% fewer clicks. Rather, the page of the product was statistically relevant, with a negative correlation between page number and number of clicks. The category of the product was also significant, and sales products saw increased clicks whereas blouses saw lower clicks. The client should leverage these findings as they consider the page of the product as an actionable insight when determining ordering of priority products, and pay less attention to the specific location on the page.
+
+For future research, it would be helpful to design an experiment or leverage a new dataset with more recent data, which should give a larger sample size and depth of data that will allow the research team greater flexibility in model building. For example, it would be helpful to have a dataset where the same product exists in multiple locations on a webpage to allow researchers to better control for product feature covariates. It would also be helpful to have additional data on the potential omitted variables mentioned, including popularity of products and amount of time available on the website. Lastly, it would be helpful to have a customer ID included in this new dataset to augment our model based on repeat clickers and even potentially customer demographics.
+
+\newpage
+
+\begin{center}
+\large
+\textbf{Sources}
+\end{center}
+
+\vspace{5mm}
+
+1. 
+
+\vspace{5mm}
+
+2. 
+
+\vspace{5mm}
+
+3. 
+
+\vspace{5mm}
+
+4. 
+
+\vspace{5mm}
+
+5. 
+
+
+
+
